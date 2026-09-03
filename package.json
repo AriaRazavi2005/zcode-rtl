@@ -1,0 +1,33 @@
+{
+  "name": "zcode-rtl",
+  "version": "1.0.0",
+  "description": "A smart RTL (Right-to-Left) UI patcher for ZCode Desktop, bringing native support for Persian, Arabic, and Hebrew languages with customizable fonts and floating settings widget.",
+  "main": "./bin/index.js",
+  "bin": {
+    "zcode-rtl": "./bin/index.js"
+  },
+  "type": "module",
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "keywords": [
+    "zcode",
+    "rtl",
+    "persian",
+    "arabic",
+    "hebrew",
+    "patcher",
+    "electron",
+    "asar"
+  ],
+  "author": "Aria Razavi",
+  "license": "MIT",
+  "dependencies": {
+    "@electron/asar": "^4.2.0",
+    "figlet": "^1.11.0",
+    "ora": "^9.4.1",
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
+  }
+}
