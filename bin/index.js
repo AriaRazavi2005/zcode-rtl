@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import picocolors from 'picocolors';
 import ora from 'ora';
 import prompts from 'prompts';
@@ -11,7 +12,7 @@ import figlet from 'figlet';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const { blue, cyan, green, red, yellow, bold, magenta } = picocolors;
+const { blue, cyan, green, red, yellow, bold } = picocolors;
 
 const pkgPath = path.join(__dirname, '..', 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
@@ -76,6 +77,20 @@ function printBanner() {
 
 printBanner();
 
+function isZCodeRunning() {
+    try {
+        if (os.platform() === 'win32') {
+            const out = execSync('tasklist /FI "IMAGENAME eq ZCode.exe" /FO CSV /NH', { encoding: 'utf8' });
+            return out.toLowerCase().includes('zcode.exe');
+        } else {
+            const out = execSync('pgrep -i zcode || true', { encoding: 'utf8' });
+            return out.trim().length > 0;
+        }
+    } catch {
+        return false;
+    }
+}
+
 function getDefaultPaths() {
     const platform = os.platform();
     const paths = [];
@@ -128,6 +143,34 @@ const args = process.argv.slice(2);
 const isRestore = args.includes('--restore');
 
 async function main() {
+    if (isZCodeRunning()) {
+        console.log(yellow('⚠ ZCode is currently open and running.'));
+        console.log(yellow('  Please completely close ZCode before patching or restoring.\n'));
+        const response = await prompts({
+            type: 'confirm',
+            name: 'shouldClose',
+            message: 'Would you like to close ZCode automatically now?',
+            initial: true
+        });
+
+        if (response.shouldClose) {
+            try {
+                if (os.platform() === 'win32') {
+                    execSync('taskkill /IM ZCode.exe /F /T');
+                } else {
+                    execSync('pkill -9 -i zcode');
+                }
+                console.log(green('✔ Successfully closed ZCode processes.\n'));
+            } catch {
+                console.log(yellow('Could not close ZCode automatically. Please close it manually and retry.\n'));
+                process.exit(1);
+            }
+        } else {
+            console.log(yellow('\nPlease close ZCode and rerun the command.\n'));
+            process.exit(1);
+        }
+    }
+
     const asarPath = await getAsarPath();
     const backupPath = asarPath + '.bak';
 
@@ -165,8 +208,8 @@ async function main() {
         process.exit(1);
     }
 
-    const extractDir = path.join(path.dirname(asarPath), 'zcode-app-extracted-rtl-temp');
-    spinner.text = 'Extracting app.asar (this may take a few seconds)...';
+    const extractDir = path.join(os.tmpdir(), 'zcode-app-extracted-rtl-temp');
+    spinner.text = 'Extracting app.asar...';
     try {
         if (fs.existsSync(extractDir)) {
             fs.rmSync(extractDir, { recursive: true, force: true });
@@ -180,40 +223,45 @@ async function main() {
 
     spinner.text = 'Injecting RTL features...';
     try {
-        const preloadPath = path.join(extractDir, 'out', 'preload', 'index.cjs');
         const indexPath = path.join(extractDir, 'out', 'renderer', 'index.html');
+        const mainPath = path.join(extractDir, 'out', 'main', 'index.js');
+        const preloadPath = path.join(extractDir, 'out', 'preload', 'index.cjs');
 
-        if (!fs.existsSync(preloadPath)) {
-            throw new Error('out/preload/index.cjs not found in ASAR. Unsupported ZCode version.');
+        if (!fs.existsSync(indexPath) || !fs.existsSync(mainPath)) {
+            throw new Error('Required files not found in ASAR. Unsupported ZCode version.');
         }
 
-        let preloadCode = fs.readFileSync(preloadPath, 'utf8');
+        // Prepare standalone bundled script
+        const fontPath = path.join(__dirname, 'Vazirmatn-Variable.woff2');
+        const fontB64 = fs.readFileSync(fontPath).toString('base64');
+        const rendererTemplate = fs.readFileSync(path.join(__dirname, 'renderer-payload.js'), 'utf8');
+        const bundledJs = rendererTemplate.replace('__FONT_BASE64_PLACEHOLDER__', fontB64);
 
-        if (preloadCode.includes('/* ZCODE RTL PATCH PAYLOAD */')) {
-            spinner.succeed('ZCode is already patched!');
-            fs.rmSync(extractDir, { recursive: true, force: true });
-            console.log(green('\n✨ Enjoy your RTL experience!\n'));
-            process.exit(0);
+        // 1. Write standalone script to renderer directory
+        const rtlScriptDest = path.join(extractDir, 'out', 'renderer', 'zcode-rtl.js');
+        fs.writeFileSync(rtlScriptDest, bundledJs, 'utf8');
+
+        // 2. Inject into index.html so it loads guaranteed with DOM
+        let indexHtml = fs.readFileSync(indexPath, 'utf8');
+        if (!indexHtml.includes('zcode-rtl.js')) {
+            indexHtml = indexHtml.replace('</body>', '<script src="./zcode-rtl.js"></script></body>');
+            fs.writeFileSync(indexPath, indexHtml, 'utf8');
         }
 
-        // Read payload and append to preload script
-        const payloadPath = path.join(__dirname, 'payload.js');
-        const payload = fs.readFileSync(payloadPath, 'utf8');
+        // 3. Inject DevTools context-menu unlock in main process
+        let mainCode = fs.readFileSync(mainPath, 'utf8');
+        // Ensure DevTools shortcut / context menu is always available
+        mainCode = mainCode.replace(/YO\.isPackaged\s*\|\|/g, '');
+        fs.writeFileSync(mainPath, mainCode, 'utf8');
 
-        preloadCode += '\n\n' + payload;
-        fs.writeFileSync(preloadPath, preloadCode, 'utf8');
-
-        // Copy offline font to preload directory so payload can load it
-        const fontSource = path.join(__dirname, 'Vazirmatn-Variable.woff2');
-        const fontDest = path.join(extractDir, 'out', 'preload', 'Vazirmatn-Variable.woff2');
-        if (fs.existsSync(fontSource)) {
-            fs.copyFileSync(fontSource, fontDest);
-        }
-
-        // Also copy font to renderer assets directory
-        const rendererFontDest = path.join(extractDir, 'out', 'renderer', 'assets', 'Vazirmatn-Variable.woff2');
-        if (fs.existsSync(fontSource)) {
-            fs.copyFileSync(fontSource, rendererFontDest);
+        // 4. Also keep preload hook for full bridge coverage
+        if (fs.existsSync(preloadPath)) {
+            let preloadCode = fs.readFileSync(preloadPath, 'utf8');
+            const preloadPayload = fs.readFileSync(path.join(__dirname, 'payload.js'), 'utf8');
+            if (!preloadCode.includes('/* ZCODE RTL PATCH PAYLOAD */')) {
+                preloadCode += '\n\n' + preloadPayload;
+                fs.writeFileSync(preloadPath, preloadCode, 'utf8');
+            }
         }
 
     } catch (e) {
@@ -223,15 +271,25 @@ async function main() {
         process.exit(1);
     }
 
-    spinner.text = 'Repacking app.asar (almost done)...';
+    spinner.text = 'Repacking app.asar (please wait)...';
     try {
-        await asar.createPackage(extractDir, asarPath);
+        const tempAsarPath = path.join(os.tmpdir(), 'zcode-patched-app.asar');
+        if (fs.existsSync(tempAsarPath)) {
+            fs.unlinkSync(tempAsarPath);
+        }
+
+        await asar.createPackage(extractDir, tempAsarPath);
         fs.rmSync(extractDir, { recursive: true, force: true });
+
+        fs.copyFileSync(tempAsarPath, asarPath);
+        fs.unlinkSync(tempAsarPath);
+
         spinner.succeed('Successfully patched ZCode!');
-        console.log(green('\n✨ RTL Features have been enabled. Please restart ZCode to see the changes.\n'));
+        console.log(green('\n✨ RTL Features have been enabled! Please restart ZCode to see the changes.\n'));
     } catch (e) {
         spinner.fail('Failed to repack ASAR.');
         console.error(red(e.message));
+        if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true, force: true });
         process.exit(1);
     }
 }
