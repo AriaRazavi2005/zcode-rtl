@@ -214,7 +214,18 @@ async function main() {
         if (fs.existsSync(extractDir)) {
             fs.rmSync(extractDir, { recursive: true, force: true });
         }
-        asar.extractAll(asarPath, extractDir);
+        try {
+            asar.extractAll(asarPath, extractDir);
+        } catch (extractErr) {
+            // Current app.asar may be corrupted (e.g. an interrupted patch) — fall back to backup
+            if (fs.existsSync(backupPath)) {
+                spinner.text = 'app.asar seems corrupted, recovering from backup...';
+                fs.rmSync(extractDir, { recursive: true, force: true });
+                asar.extractAll(backupPath, extractDir);
+            } else {
+                throw extractErr;
+            }
+        }
     } catch (e) {
         spinner.fail('Failed to extract ASAR.');
         console.error(red(e.message));
@@ -229,6 +240,18 @@ async function main() {
 
         if (!fs.existsSync(indexPath) || !fs.existsSync(mainPath)) {
             throw new Error('Required files not found in ASAR. Unsupported ZCode version.');
+        }
+
+        // Already-patched check: primary marker is the script tag in index.html
+        const indexHtmlCheck = fs.readFileSync(indexPath, 'utf8');
+        const preloadCheck = fs.existsSync(preloadPath)
+            ? fs.readFileSync(preloadPath, 'utf8')
+            : '';
+        if (indexHtmlCheck.includes('zcode-rtl.js') && preloadCheck.includes('/* ZCODE RTL PATCH PAYLOAD */')) {
+            spinner.succeed('ZCode is already patched!');
+            fs.rmSync(extractDir, { recursive: true, force: true });
+            console.log(green('\n✨ Enjoy your RTL experience!\n'));
+            process.exit(0);
         }
 
         // Prepare standalone bundled script
@@ -249,10 +272,20 @@ async function main() {
         }
 
         // 3. Inject DevTools context-menu unlock in main process
+        // Version-resilient: locate "Inspect Element" and flip the nearest `.isPackaged||(` gate,
+        // regardless of the minified variable name (YO, tD, etc. change per build)
         let mainCode = fs.readFileSync(mainPath, 'utf8');
-        // Ensure DevTools shortcut / context menu is always available
-        mainCode = mainCode.replace(/YO\.isPackaged\s*\|\|/g, '');
-        fs.writeFileSync(mainPath, mainCode, 'utf8');
+        const inspectIdx = mainCode.indexOf('label:"Inspect Element"');
+        if (inspectIdx !== -1) {
+            const before = mainCode.slice(0, inspectIdx);
+            const gateIdx = before.lastIndexOf('.isPackaged||(');
+            if (gateIdx !== -1) {
+                mainCode = mainCode.slice(0, gateIdx) + '.isPackaged||true||(' + mainCode.slice(gateIdx + '.isPackaged||('.length);
+                fs.writeFileSync(mainPath, mainCode, 'utf8');
+            } else {
+                console.log(yellow('  ℹ DevTools gate not found (may already be unlocked in this build).'));
+            }
+        }
 
         // 4. Also keep preload hook for full bridge coverage
         if (fs.existsSync(preloadPath)) {
@@ -285,7 +318,32 @@ async function main() {
         fs.unlinkSync(tempAsarPath);
 
         spinner.succeed('Successfully patched ZCode!');
-        console.log(green('\n✨ RTL Features have been enabled! Please restart ZCode to see the changes.\n'));
+        console.log(green('\n✨ RTL Features have been enabled!\n'));
+
+        // Offer to restart ZCode automatically
+        const restart = await prompts({
+            type: 'confirm',
+            name: 'shouldRestart',
+            message: 'Launch ZCode now?',
+            initial: true
+        });
+
+        if (restart.shouldRestart) {
+            try {
+                const exePath = path.join(path.dirname(path.dirname(asarPath)), 'ZCode.exe');
+                if (os.platform() === 'win32' && fs.existsSync(exePath)) {
+                    const { spawn } = await import('child_process');
+                    spawn('cmd', ['/c', 'start', '', exePath], { detached: true, stdio: 'ignore' }).unref();
+                } else if (os.platform() === 'darwin') {
+                    execSync(`open "${path.join(path.dirname(path.dirname(asarPath)), '..')}"`);
+                } else {
+                    execSync('nohup zcode >/dev/null 2>&1 &');
+                }
+                console.log(green('✔ ZCode is launching. Enjoy your RTL experience!\n'));
+            } catch {
+                console.log(yellow('Could not auto-launch ZCode. Please start it manually.\n'));
+            }
+        }
     } catch (e) {
         spinner.fail('Failed to repack ASAR.');
         console.error(red(e.message));

@@ -10,7 +10,7 @@
         faFont: '',
         enFont: '',
         codeFont: '',
-        lh: '1.65',
+        lh: '1.75',
         fs: '14',
         isRTL: true,
         forceRTL: false,
@@ -39,8 +39,8 @@
         widgetStyle.textContent = `
             .zcode-rtl-widget-container {
                 position: fixed;
-                bottom: 18px;
-                right: 18px;
+                bottom: 20px;
+                right: 20px;
                 width: 38px;
                 height: 38px;
                 z-index: 2147483640;
@@ -188,7 +188,7 @@
         `;
         document.head.appendChild(widgetStyle);
 
-        // 2. Dynamic Font and RTL Styles
+        // 2. Dynamic Font, Size and Line-Height Styles
         const rtlStyle = document.createElement('style');
         rtlStyle.id = 'zcode-rtl-dynamic-style';
 
@@ -218,11 +218,20 @@
             let enFontStr = enFont ? `'${enFont}', ui-sans-serif, system-ui, sans-serif` : 'ui-sans-serif, system-ui, sans-serif';
             let codeFontStr = codeFont ? `'${codeFont}', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace` : 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
+            const fontSizeVal = fs || '14';
+            const lineHeightVal = lh || '1.75';
+
             let forceRtlRule = forceRTL ? `
                 .prose > *:not(pre):not(code),
                 .markdown-body > *:not(pre):not(code),
-                [class*="message"] > *:not(pre):not(code),
-                [class*="chat"] > *:not(pre):not(code) {
+                [class*="prose"] p,
+                [class*="prose"] li,
+                [class*="prose"] h1,
+                [class*="prose"] h2,
+                [class*="prose"] h3,
+                [class*="prose"] h4,
+                [class*="message"] p,
+                [class*="message"] li {
                     direction: rtl !important;
                     text-align: right !important;
                     unicode-bidi: isolate !important;
@@ -237,38 +246,68 @@
                     font-weight: 100 900;
                     unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
                 }
+                
+                /* Global Root CSS Variable Overrides */
                 :root, :host, html, body {
+                    --ui-font-size: ${fontSizeVal}px !important;
+                    --text-ui-base: ${fontSizeVal}px !important;
+                    --text-ui-sm: calc(${fontSizeVal}px - 2px) !important;
+                    --text-ui-lg: calc(${fontSizeVal}px + 2px) !important;
+                    --text-ui-caption: calc(${fontSizeVal}px - 1px) !important;
+                    --tw-leading: ${lineHeightVal} !important;
                     font-family: ${faFontName}, ${enFontStr}, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
                 }
-                .prose, .markdown-body, [class*="message"], [contenteditable="true"] {
-                    font-size: ${fs}px !important;
+                
+                /* Target all message text, markdown, prose, and paragraphs directly */
+                .prose,
+                .prose p,
+                .prose li,
+                .prose span,
+                .prose div,
+                .markdown-body,
+                .markdown-body p,
+                .markdown-body li,
+                [class*="prose"] p,
+                [class*="prose"] li,
+                [contenteditable="true"],
+                [contenteditable="true"] p,
+                [contenteditable="true"] span {
+                    font-size: ${fontSizeVal}px !important;
+                    line-height: ${lineHeightVal} !important;
                 }
+                
                 p, h1, h2, h3, h4, h5, h6, ul, ol {
                     unicode-bidi: plaintext;
                     text-align: start;
                 }
+                
                 .prose > *, .markdown-body > * {
                     unicode-bidi: plaintext;
                     text-align: start;
                 }
+                
                 ${forceRtlRule}
+                
+                /* RTL List indentations */
                 ul[dir="rtl"], ol[dir="rtl"], [dir="rtl"] ul, [dir="rtl"] ol {
                     padding-left: 0 !important;
                     padding-right: 1.5rem !important;
                 }
+                
+                /* Keep code blocks LTR with user selected code font */
                 pre, code, pre *, code * {
                     unicode-bidi: isolate !important;
                     direction: ltr !important;
                     text-align: left !important;
                     font-family: ${codeFontStr} !important;
+                    line-height: 1.5 !important;
                 }
-                .prose p, .prose li, .markdown-body p, [contenteditable="true"], [contenteditable="true"] p {
-                    line-height: ${lh} !important;
-                }
+                
                 [contenteditable="true"], [contenteditable="true"] * {
                     unicode-bidi: isolate !important;
                     text-align: start !important;
                 }
+                
                 .truncate, [role="treeitem"] {
                     unicode-bidi: plaintext !important;
                     text-align: start !important;
@@ -281,40 +320,64 @@
             updateDynamicCSS(rtlConfig.faFont, rtlConfig.enFont, rtlConfig.codeFont, rtlConfig.lh, rtlConfig.fs);
         }
 
-        // 3. Direction Auto-detection Observer
+        // 3. Smart Direction Auto-detection
+        // Detects RTL even if the sentence starts with English words (e.g., "Docker یک ابزار عالی است")
+        function getSmartDirection(text) {
+            const clean = text.replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
+            if (!clean) return 'auto';
+
+            if (forceRTL) return 'rtl';
+
+            // Count Persian/Arabic characters vs English Latin characters
+            const rtlMatches = clean.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC]/g) || [];
+            const ltrMatches = clean.match(/[A-Za-z]/g) || [];
+
+            if (rtlMatches.length > 0) {
+                // If there are at least 3 RTL letters, or RTL is at least 25% of all letters, treat as RTL
+                const totalLetters = rtlMatches.length + ltrMatches.length;
+                if (rtlMatches.length >= 3 || (totalLetters > 0 && rtlMatches.length / totalLetters >= 0.25)) {
+                    return 'rtl';
+                }
+            }
+
+            return 'ltr';
+        }
+
         function updateDir() {
             if (!isRTL) return;
 
+            // Inputs / Textareas
             document.querySelectorAll('[contenteditable="true"], [contenteditable="true"] p, textarea, input[type="text"]').forEach(el => {
-                const text = (el.value || el.textContent || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
+                const text = (el.value || el.textContent || '').trim();
                 if (text.length > 0) {
-                    const isRtlText = /^[^\x00-\x7F]*[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC]/.test(text) ||
-                                      /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC]/.test(text.slice(0, 15));
-                    const newDir = isRtlText ? 'rtl' : 'ltr';
+                    const newDir = getSmartDirection(text);
                     if (el.getAttribute('dir') !== newDir) el.setAttribute('dir', newDir);
                 } else {
                     if (el.hasAttribute('dir')) el.removeAttribute('dir');
                 }
             });
 
-            document.querySelectorAll('.prose > *, .markdown-body > *, [class*="message"] p, [class*="message"] li').forEach(el => {
+            // Chat outputs, markdown, list items, headers
+            document.querySelectorAll(`
+                .prose > *,
+                .markdown-body > *,
+                [class*="prose"] p,
+                [class*="prose"] li,
+                [class*="prose"] h1,
+                [class*="prose"] h2,
+                [class*="prose"] h3,
+                [class*="prose"] h4,
+                [class*="message"] p,
+                [class*="message"] li
+            `).forEach(el => {
                 if (el.tagName === 'PRE' || el.tagName === 'CODE' || el.closest('pre') || el.closest('code')) return;
 
-                const text = (el.textContent || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
-                let dir = 'auto';
-
-                if (forceRTL) {
-                    dir = 'rtl';
-                } else if (text) {
-                    const firstChar = text.match(/[A-Za-z\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/);
-                    if (firstChar) {
-                        const isPersianOrArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(firstChar[0]);
-                        dir = isPersianOrArabic ? 'rtl' : 'ltr';
+                const text = (el.textContent || '').trim();
+                if (text.length > 0) {
+                    const dir = getSmartDirection(text);
+                    if (el.getAttribute('dir') !== dir) {
+                        el.setAttribute('dir', dir);
                     }
-                }
-
-                if (el.getAttribute('dir') !== dir) {
-                    el.setAttribute('dir', dir);
                 }
             });
         }
@@ -323,7 +386,7 @@
         document.body.addEventListener('focusin', updateDir, { capture: true });
         const observer = new MutationObserver(updateDir);
         observer.observe(document.body, { childList: true, subtree: true });
-        setInterval(updateDir, 800);
+        setInterval(updateDir, 600);
 
         // Keyboard Shortcuts
         document.addEventListener('keydown', (e) => {
@@ -382,12 +445,12 @@
                             <input id="zcode-code-input" class="zcode-rtl-input" placeholder="Default: Monospace" value="${rtlConfig.codeFont}">
                         </div>
                         <div class="zcode-rtl-row">
-                            <span class="zcode-rtl-label">Line Height</span>
+                            <span class="zcode-rtl-label">Line Height (<span id="zcode-lh-val">${rtlConfig.lh}</span>)</span>
                             <input id="zcode-lh-input" type="range" min="1.3" max="2.4" step="0.05" value="${rtlConfig.lh}" style="width: 90px; accent-color: #0284c7; cursor: pointer;">
                         </div>
                         <div class="zcode-rtl-row">
-                            <span class="zcode-rtl-label">Font Size</span>
-                            <input id="zcode-fs-input" type="range" min="12" max="20" step="1" value="${rtlConfig.fs}" style="width: 90px; accent-color: #0284c7; cursor: pointer;">
+                            <span class="zcode-rtl-label">Font Size (<span id="zcode-fs-val">${rtlConfig.fs}px</span>)</span>
+                            <input id="zcode-fs-input" type="range" min="12" max="22" step="1" value="${rtlConfig.fs}" style="width: 90px; accent-color: #0284c7; cursor: pointer;">
                         </div>
                         <div class="zcode-rtl-separator"></div>
                         <div class="zcode-rtl-row">
@@ -423,6 +486,8 @@
         const codeInput = document.getElementById('zcode-code-input');
         const lhInput = document.getElementById('zcode-lh-input');
         const fsInput = document.getElementById('zcode-fs-input');
+        const lhVal = document.getElementById('zcode-lh-val');
+        const fsVal = document.getElementById('zcode-fs-val');
 
         const persistConfig = () => {
             const data = {
@@ -485,7 +550,10 @@
 
         const onFontChange = () => {
             persistConfig();
+            lhVal.textContent = lhInput.value;
+            fsVal.textContent = fsInput.value + 'px';
             updateDynamicCSS(faInput.value.trim(), enInput.value.trim(), codeInput.value.trim(), lhInput.value, fsInput.value);
+            updateDir();
         };
 
         faInput.addEventListener('input', onFontChange);
