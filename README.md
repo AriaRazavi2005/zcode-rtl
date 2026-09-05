@@ -55,6 +55,20 @@ npx zcode-rtl
 
 ---
 
+## 📦 Prerequisites — No Node.js yet?
+
+`zcode-rtl` runs on **Node.js 18+** (which includes `npx`). Don't have it installed? One command and you're set:
+
+| OS | Install command |
+| :--- | :--- |
+| Windows | `winget install OpenJS.NodeJS.LTS` — or download the installer from [nodejs.org](https://nodejs.org/en/download) |
+| macOS | `brew install node` — or download the installer from [nodejs.org](https://nodejs.org/en/download) |
+| Linux | `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh \| bash` → restart terminal → `nvm install --lts` |
+
+Verify with `node -v` (should show `v18` or higher), then continue below.
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Run with `npx` (No installation needed)
@@ -76,6 +90,34 @@ zcode-rtl
 > ```bash
 > sudo npx zcode-rtl
 > ```
+
+---
+
+## 🤖 Too Lazy? Let Your AI Agent Do It
+
+Using an AI coding agent like **ZCode, Antigravity, Cursor, Copilot or Claude Code**? Copy the block below, paste it into your agent's chat, and it will handle the whole setup for you — Node.js install included:
+
+```text
+You are my setup assistant. Install and configure the "zcode-rtl" patcher on this machine.
+
+1. Check if Node.js v18+ is installed (run: node -v). If it's missing or older than v18, install the LTS version:
+   - Windows: winget install OpenJS.NodeJS.LTS  (or download from https://nodejs.org)
+   - macOS:   brew install node
+   - Linux:   install nvm, then: nvm install --lts
+2. IMPORTANT: If you (the agent) are running INSIDE ZCode Desktop, do NOT execute the
+   patcher from this session — the patcher closes ZCode and your session will be killed
+   mid-run. In that case, print the exact manual commands for me and stop.
+3. If you are running outside ZCode, execute: npx zcode-rtl@latest
+   - Windows: the terminal must be elevated (Run as Administrator), because ZCode is
+     installed under C:\Program Files.
+   - macOS/Linux: run it with sudo.
+   - When it asks to close ZCode automatically, answer Yes.
+4. After patching finishes, relaunch ZCode and verify the floating blue RTL widget
+   appears near the bottom-right corner.
+5. Rollback option at any time: npx zcode-rtl --restore
+
+Note: ZCode updates remove the patch. After every ZCode update, re-run npx zcode-rtl@latest.
+```
 
 ---
 

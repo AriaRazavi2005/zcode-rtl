@@ -1,6 +1,9 @@
 {
   "name": "zcode-rtl",
-  "version": "1.1.0",
+  "version": "1.1.1",
+  "engines": {
+    "node": ">=18"
+  },
   "description": "A smart RTL (Right-to-Left) UI patcher for ZCode Desktop, bringing native support for Persian, Arabic, and Hebrew languages with customizable fonts and floating settings widget.",
   "main": "./bin/index.js",
   "bin": {
