@@ -2,3 +2,4 @@ node_modules
 *.bak
 *-temp
 .DS_Store
+.npmrc
