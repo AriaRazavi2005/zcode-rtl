@@ -11,6 +11,14 @@
     "bin",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AriaRazavi2005/zcode-rtl.git"
+  },
+  "homepage": "https://github.com/AriaRazavi2005/zcode-rtl#readme",
+  "bugs": {
+    "url": "https://github.com/AriaRazavi2005/zcode-rtl/issues"
+  },
   "keywords": [
     "zcode",
     "rtl",

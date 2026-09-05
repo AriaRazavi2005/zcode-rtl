@@ -2,7 +2,7 @@
 
 A smart **RTL (Right-to-Left)** patcher and UI customizer for the **ZCode Desktop** application, bringing native support for Persian, Arabic, and Hebrew languages with customizable fonts and a floating settings widget.
 
-Inspired by [antigravity-rtl](https://github.com/AriaRazavi2005/antigravity-rtl).
+> Inspired by [antigravity-rtl](https://github.com/AriaRazavi2005/antigravity-rtl).
 
 ---
 
