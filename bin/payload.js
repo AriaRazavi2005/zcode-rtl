@@ -230,9 +230,11 @@
             let enFontStr = enFont ? `'${enFont}', ui-sans-serif, system-ui, sans-serif` : 'ui-sans-serif, system-ui, sans-serif';
             let codeFontStr = codeFont ? `'${codeFont}', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace` : 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
+            // Table wrappers are excluded: forcing RTL on them flips ZCode's table
+            // scroll box, which breaks its custom horizontal scrollbar.
             let forceRtlRule = forceRTL ? `
-                .prose > *:not(pre):not(code),
-                .markdown-body > *:not(pre):not(code),
+                .prose > *:not(pre):not(code):not(:has(table)),
+                .markdown-body > *:not(pre):not(code):not(:has(table)),
                 [class*="chat"] > *:not(pre):not(code),
                 [class*="message"] > *:not(pre):not(code) {
                     direction: rtl !important;
@@ -264,6 +266,9 @@
                     text-align: start;
                 }
                 ${forceRtlRule}
+                th[data-zcode-rtl-align="right"], td[data-zcode-rtl-align="right"] { text-align: right !important; }
+                th[data-zcode-rtl-align="left"], td[data-zcode-rtl-align="left"] { text-align: left !important; }
+                th[data-zcode-rtl-align="center"], td[data-zcode-rtl-align="center"] { text-align: center !important; }
                 ul[dir="rtl"], ol[dir="rtl"], [dir="rtl"] ul, [dir="rtl"] ol {
                     padding-left: 0 !important;
                     padding-right: 1.5rem !important;
@@ -293,6 +298,67 @@
             updateDynamicCSS(rtlConfig.faFont, rtlConfig.enFont, rtlConfig.codeFont, rtlConfig.lh, rtlConfig.fs);
         }
 
+        // Markdown tables (same logic as renderer-payload.js). ZCode renders them with
+        // Streamdown as table[data-streamdown] inside an LTR scroll box.
+        const TABLE_SELECTOR = 'table[data-streamdown], .prose table, .markdown-body table';
+        const RTL_CHAR_RE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-ﻼ]/g;
+        const LETTER_RE = /[A-Za-z؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-ﻼ]/;
+
+        function setAttr(el, name, value) {
+            if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+        }
+
+        // RTL if there are at least 3 RTL letters or they make up 25% of all letters.
+        function detectTextDir(text) {
+            const rtlCount = (text.match(RTL_CHAR_RE) || []).length;
+            const ltrCount = (text.match(/[A-Za-z]/g) || []).length;
+            if (rtlCount >= 3 || (rtlCount > 0 && rtlCount / (rtlCount + ltrCount) >= 0.25)) return 'rtl';
+            return 'ltr';
+        }
+
+        function getTableDirection(table) {
+            if (forceRTL) return 'rtl';
+            const headerRow = (table.tHead && table.tHead.rows[0]) || table.rows[0];
+            const headerText = headerRow ? headerRow.textContent : '';
+            return detectTextDir(LETTER_RE.test(headerText) ? headerText : (table.textContent || ''));
+        }
+
+        // Markdown ":---" / "---:" mean start / end, so they mirror in an RTL table.
+        function getCellAlignment(cell, tableDir) {
+            const declared = (cell.getAttribute('align') || cell.style.textAlign || '').toLowerCase();
+            if (declared === 'center') return 'center';
+            const atEnd = declared === 'right' || declared === 'end';
+            return (tableDir === 'rtl') !== atEnd ? 'right' : 'left';
+        }
+
+        function updateTables() {
+            document.querySelectorAll(TABLE_SELECTOR).forEach(table => {
+                if (table.closest('pre, code, [contenteditable="true"], #zcode-rtl-root')) return;
+
+                const tableDir = getTableDirection(table);
+                setAttr(table, 'dir', tableDir);
+
+                for (const row of table.rows) {
+                    for (const cell of row.cells) {
+                        const text = (cell.textContent || '').replace(/[​-‏﻿]/g, '').trim();
+                        setAttr(cell, 'dir', LETTER_RE.test(text) ? detectTextDir(text) : tableDir);
+                        setAttr(cell, 'data-zcode-rtl-align', getCellAlignment(cell, tableDir));
+                    }
+                }
+
+                // Keep the scroll box LTR (ZCode's custom scrollbar assumes it) and open
+                // wide RTL tables scrolled to their right edge, where the first column is.
+                const scroller = table.parentElement;
+                if (tableDir === 'rtl' && scroller && !scroller.hasAttribute('data-zcode-rtl-scrolled')) {
+                    const overflow = scroller.scrollWidth - scroller.clientWidth;
+                    if (overflow > 1 && getComputedStyle(scroller).direction === 'ltr') {
+                        scroller.setAttribute('data-zcode-rtl-scrolled', '');
+                        if (scroller.scrollLeft === 0) scroller.scrollLeft = overflow;
+                    }
+                }
+            });
+        }
+
         // 3. Direction auto-detection observer
         function updateDir() {
             if (!isRTL) return;
@@ -313,6 +379,8 @@
             // Output messages & Markdown
             document.querySelectorAll('.prose > *, .markdown-body > *, [class*="message"] p, [class*="message"] li').forEach(el => {
                 if (el.tagName === 'PRE' || el.tagName === 'CODE' || el.closest('pre') || el.closest('code')) return;
+                // Tables are handled by updateTables; a dir on their wrapper would flip the scroll box.
+                if (el.tagName === 'TABLE' || el.querySelector('table')) return;
 
                 const text = (el.textContent || '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
                 let dir = 'auto';
@@ -331,6 +399,8 @@
                     el.setAttribute('dir', dir);
                 }
             });
+
+            updateTables();
         }
 
         document.body.addEventListener('input', updateDir, { capture: true });

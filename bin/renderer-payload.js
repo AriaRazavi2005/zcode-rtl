@@ -221,9 +221,12 @@
             const fontSizeVal = fs || '14';
             const lineHeightVal = lh || '1.75';
 
+            // Table wrappers are excluded: forcing RTL on them flips ZCode's table
+            // scroll box, which breaks its custom horizontal scrollbar. Tables are
+            // handled separately (see updateTables).
             let forceRtlRule = forceRTL ? `
-                .prose > *:not(pre):not(code),
-                .markdown-body > *:not(pre):not(code),
+                .prose > *:not(pre):not(code):not(:has(table)),
+                .markdown-body > *:not(pre):not(code):not(:has(table)),
                 [class*="prose"] p,
                 [class*="prose"] li,
                 [class*="prose"] h1,
@@ -288,6 +291,12 @@
                 
                 ${forceRtlRule}
                 
+                /* Markdown table cells: align by the table's direction (set by updateTables).
+                   Overrides ZCode's hard-coded "text-left" on <th>. */
+                th[data-zcode-rtl-align="right"], td[data-zcode-rtl-align="right"] { text-align: right !important; }
+                th[data-zcode-rtl-align="left"], td[data-zcode-rtl-align="left"] { text-align: left !important; }
+                th[data-zcode-rtl-align="center"], td[data-zcode-rtl-align="center"] { text-align: center !important; }
+
                 /* RTL List indentations */
                 ul[dir="rtl"], ol[dir="rtl"], [dir="rtl"] ul, [dir="rtl"] ol {
                     padding-left: 0 !important;
@@ -322,11 +331,11 @@
 
         // 3. Smart Direction Auto-detection
         // Detects RTL even if the sentence starts with English words (e.g., "Docker یک ابزار عالی است")
-        function getSmartDirection(text) {
+        function getSmartDirection(text, { ignoreForce = false } = {}) {
             const clean = text.replace(/[\u200B-\u200F\uFEFF]/g, '').trim();
             if (!clean) return 'auto';
 
-            if (forceRTL) return 'rtl';
+            if (forceRTL && !ignoreForce) return 'rtl';
 
             // Count Persian/Arabic characters vs English Latin characters
             const rtlMatches = clean.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC]/g) || [];
@@ -341,6 +350,67 @@
             }
 
             return 'ltr';
+        }
+
+        // Markdown tables. ZCode renders them with Streamdown as table[data-streamdown]
+        // inside an LTR scroll box. Without this, an Arabic/Persian table keeps LTR
+        // column order, every cell inherits an LTR base direction (so mixed text like
+        // "تدعم 3D Secure" is reordered), and <th> is hard-coded to text-left.
+        const TABLE_SELECTOR = 'table[data-streamdown], .prose table, .markdown-body table';
+        const LETTER_RE = /[A-Za-z؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-ﻼ]/;
+
+        function setAttr(el, name, value) {
+            if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+        }
+
+        // Column order follows the header row; a numbers-only header falls back to the whole table.
+        function getTableDirection(table) {
+            if (forceRTL) return 'rtl';
+            const headerRow = (table.tHead && table.tHead.rows[0]) || table.rows[0];
+            const headerText = headerRow ? headerRow.textContent : '';
+            const sample = LETTER_RE.test(headerText) ? headerText : (table.textContent || '');
+            return getSmartDirection(sample) === 'rtl' ? 'rtl' : 'ltr';
+        }
+
+        // Markdown ":---" / "---:" mean start / end, so they mirror in an RTL table.
+        function getCellAlignment(cell, tableDir) {
+            const declared = (cell.getAttribute('align') || cell.style.textAlign || '').toLowerCase();
+            if (declared === 'center') return 'center';
+            const atEnd = declared === 'right' || declared === 'end';
+            return (tableDir === 'rtl') !== atEnd ? 'right' : 'left';
+        }
+
+        function updateTables() {
+            document.querySelectorAll(TABLE_SELECTOR).forEach(table => {
+                if (table.closest('pre, code, [contenteditable="true"], #zcode-rtl-root')) return;
+
+                const tableDir = getTableDirection(table);
+                setAttr(table, 'dir', tableDir);
+
+                for (const row of table.rows) {
+                    for (const cell of row.cells) {
+                        // Each cell gets its own base direction from its content, so an
+                        // English-only cell stays LTR inside an RTL table (and vice versa).
+                        const text = (cell.textContent || '').trim();
+                        const cellDir = LETTER_RE.test(text)
+                            ? getSmartDirection(text, { ignoreForce: true })
+                            : tableDir;
+                        setAttr(cell, 'dir', cellDir);
+                        setAttr(cell, 'data-zcode-rtl-align', getCellAlignment(cell, tableDir));
+                    }
+                }
+
+                // The scroll box stays LTR (ZCode's custom scrollbar assumes it), so a wide
+                // RTL table would open on its last columns. Scroll it once to the right edge.
+                const scroller = table.parentElement;
+                if (tableDir === 'rtl' && scroller && !scroller.hasAttribute('data-zcode-rtl-scrolled')) {
+                    const overflow = scroller.scrollWidth - scroller.clientWidth;
+                    if (overflow > 1 && getComputedStyle(scroller).direction === 'ltr') {
+                        scroller.setAttribute('data-zcode-rtl-scrolled', '');
+                        if (scroller.scrollLeft === 0) scroller.scrollLeft = overflow;
+                    }
+                }
+            });
         }
 
         function updateDir() {
@@ -371,6 +441,8 @@
                 [class*="message"] li
             `).forEach(el => {
                 if (el.tagName === 'PRE' || el.tagName === 'CODE' || el.closest('pre') || el.closest('code')) return;
+                // Tables are handled by updateTables; a dir on their wrapper would flip the scroll box.
+                if (el.tagName === 'TABLE' || el.querySelector('table')) return;
 
                 const text = (el.textContent || '').trim();
                 if (text.length > 0) {
@@ -380,6 +452,8 @@
                     }
                 }
             });
+
+            updateTables();
         }
 
         document.body.addEventListener('input', updateDir, { capture: true });
